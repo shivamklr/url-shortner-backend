@@ -71,11 +71,11 @@ func connectToMongodb() *mongo.Client {
 	return client
 }
 
-func connectToRedis() *redis.Client {
+func connectToRedis(dbNo int) *redis.Client {
 	client := redis.NewClient(&redis.Options{
 		Addr:     os.Getenv("REDIS_URI"),
 		Password: os.Getenv("REDIS_PASS"),
-		DB:       0,
+		DB:       dbNo,
 	})
 	return client
 }
