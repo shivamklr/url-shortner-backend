@@ -55,3 +55,27 @@ func main() {
 
 	app.Listen(":3000")
 }
+
+func connectToMongodb() *mongo.Client {
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found")
+	}
+	uri := os.Getenv("MONGODB_URI")
+	if uri == "" {
+		log.Fatal("You must set your 'MONGODB_URI' environmental variable.")
+	}
+	client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(uri))
+	if err != nil {
+		panic(err)
+	}
+	return client
+}
+
+func connectToRedis() *redis.Client {
+	client := redis.NewClient(&redis.Options{
+		Addr:     os.Getenv("REDIS_URI"),
+		Password: os.Getenv("REDIS_PASS"),
+		DB:       0,
+	})
+	return client
+}
