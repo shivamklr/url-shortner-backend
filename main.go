@@ -23,6 +23,12 @@ type ShortenUrl struct {
 	ShortenUrl  string             `json:"shorten_url" bson:"shorten_url,omitempty"`
 }
 
+type ShortenResponse struct {
+	Status  int        `json:"status"`
+	Message string     `json:"message"`
+	Data    *fiber.Map `json:"data"`
+}
+
 var urlCollection *mongo.Collection = GetCollection(DB, "urls")
 
 func createShortenURL(ctx *fiber.Ctx) error {
@@ -37,11 +43,16 @@ func createShortenURL(ctx *fiber.Ctx) error {
 	// insert data to mongodb database,
 	body.ShortenUrl = uuid.New().String()[:6]
 	body.ExpireIn = 24
-	if _, err := urlCollection.InsertOne(context.Background(), body); err != nil {
+	result, err := urlCollection.InsertOne(context.Background(), body)
+	if err != nil {
 		log.Fatal(err)
 
 	}
-
+	bodyId, ok := result.InsertedID.(primitive.ObjectID)
+	if !ok {
+		log.Fatal("Type Assertion Failed")
+	}
+	body.Id = bodyId
 	// fmt.Printf("Inserted document with _id: %v\n", res.InsertedID)
 	// add ttl of 2 hours
 	// if data is inserted add cache data to redis
@@ -51,7 +62,8 @@ func createShortenURL(ctx *fiber.Ctx) error {
 		log.Fatal(err)
 	}
 	//  add ttl of 1 minute.
-	return ctx.SendStatus(fiber.StatusCreated)
+	body.ShortenUrl = os.Getenv("DOMAIN") + "/" + body.ShortenUrl
+	return ctx.Status(fiber.StatusCreated).JSON(ShortenResponse{Status: fiber.StatusCreated, Message: "success", Data: &fiber.Map{"data": body}})
 }
 
 func resolveURL(ctx *fiber.Ctx) error {
@@ -96,7 +108,7 @@ func main() {
 	})
 	app.Post("/api/v1", createShortenURL)
 	app.Get("/:url", resolveURL)
-	app.Listen(":3000")
+	log.Fatal(app.Listen(os.Getenv("APP_PORT")))
 }
 
 func connectToMongodb() *mongo.Client {
