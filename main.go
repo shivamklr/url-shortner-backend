@@ -46,6 +46,7 @@ func createShortenURL(ctx *fiber.Ctx) error {
 	// add ttl of 2 hours
 	// if data is inserted add cache data to redis
 	redisClient := connectToRedis(0)
+	defer redisClient.Close()
 	if err := redisClient.Set(context.Background(), body.ShortenUrl, body.OriginalUrl, 1*60*time.Second).Err(); err != nil {
 		log.Fatal(err)
 	}
@@ -53,16 +54,34 @@ func createShortenURL(ctx *fiber.Ctx) error {
 	return ctx.SendStatus(fiber.StatusCreated)
 }
 
-// func resolveURL(ctx *fiber.Ctx) error {
-// 	// parse body from context and check for errors
+func resolveURL(ctx *fiber.Ctx) error {
+	// get the short from url params
+	url := ctx.Params("url")
 
-// 	// check whether the shorten URL key exist in redis cache
+	// check whether the shorten URL key exist in redis cache
+	redisClient := connectToRedis(0)
+	defer redisClient.Close()
+	val, err := redisClient.Get(context.Background(), url).Result()
+	if err == redis.Nil {
+		// if it does not, db lookup, add it in the cache and return it
+		var urlFound ShortenUrl
+		filter := ShortenUrl{
+			ShortenUrl: url,
+		}
+		if err := urlCollection.FindOne(context.Background(), filter).Decode(&urlFound); err != nil {
+			return ctx.SendStatus(fiber.StatusInternalServerError)
+		}
+		if err := redisClient.Set(context.Background(), urlFound.ShortenUrl, urlFound.OriginalUrl, 1*60*time.Second).Err(); err != nil {
+			log.Fatal(err)
+		}
+		return ctx.Redirect(urlFound.OriginalUrl, 302)
+	} else if err != nil {
+		log.Fatal(err)
+	}
+	// if it does exist in cache, return that as response
+	return ctx.Redirect(val, 302)
+}
 
-// 	// if it does, return that as response
-
-// 	// if it does not add it in the cache and return it
-
-// }
 var DB *mongo.Client = connectToMongodb()
 
 func main() {
@@ -76,7 +95,7 @@ func main() {
 		return ctx.SendString("Hello World")
 	})
 	app.Post("/api/v1", createShortenURL)
-
+	app.Get("/:url", resolveURL)
 	app.Listen(":3000")
 }
 
