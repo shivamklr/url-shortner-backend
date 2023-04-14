@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"time"
@@ -10,6 +9,7 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -23,9 +23,6 @@ type ShortenUrl struct {
 	ShortenUrl  string             `json:"shorten_url" bson:"shorten_url,omitempty"`
 }
 
-//	type CreateShortenUrlResponse struct {
-//		// create fields to be a part of response instance
-//	}
 var urlCollection *mongo.Collection = GetCollection(DB, "urls")
 
 func createShortenURL(ctx *fiber.Ctx) error {
@@ -38,13 +35,21 @@ func createShortenURL(ctx *fiber.Ctx) error {
 		})
 	}
 	// insert data to mongodb database,
-	res, err := urlCollection.InsertOne(context.Background(), body)
-	if err != nil {
+	body.ShortenUrl = uuid.New().String()[:6]
+	body.ExpireIn = 24
+	if _, err := urlCollection.InsertOne(context.Background(), body); err != nil {
+		log.Fatal(err)
+
+	}
+
+	// fmt.Printf("Inserted document with _id: %v\n", res.InsertedID)
+	// add ttl of 2 hours
+	// if data is inserted add cache data to redis
+	redisClient := connectToRedis(0)
+	if err := redisClient.Set(context.Background(), body.ShortenUrl, body.OriginalUrl, 1*60*time.Second).Err(); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Inserted document with _id: %v\n", res.InsertedID)
-	// add ttl of 2 hours
-	// if data is inserted add cache data to redis add ttl of 1 minute.
+	//  add ttl of 1 minute.
 	return ctx.SendStatus(fiber.StatusCreated)
 }
 
