@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -29,8 +30,6 @@ type ShortenResponse struct {
 	Data    *fiber.Map `json:"data"`
 }
 
-var urlCollection *mongo.Collection = GetCollection(DB, "urls")
-
 func createShortenURL(ctx *fiber.Ctx) error {
 
 	body := new(ShortenUrl)
@@ -41,7 +40,7 @@ func createShortenURL(ctx *fiber.Ctx) error {
 		})
 	}
 	// insert data to mongodb database,
-	body.ShortenUrl = uuid.New().String()[:6]
+	body.ShortenUrl = uuid.New().String()[:8]
 	body.ExpireIn = 24
 	result, err := urlCollection.InsertOne(context.Background(), body)
 	if err != nil {
@@ -81,6 +80,9 @@ func resolveURL(ctx *fiber.Ctx) error {
 			ShortenUrl: url,
 		}
 		if err := urlCollection.FindOne(context.Background(), filter).Decode(&urlFound); err != nil {
+			if err == mongo.ErrNoDocuments {
+				return ctx.SendStatus(fiber.StatusNotFound)
+			}
 			return ctx.SendStatus(fiber.StatusInternalServerError)
 		}
 		if err := redisClient.Set(context.Background(), urlFound.ShortenUrl, urlFound.OriginalUrl, 1*60*time.Second).Err(); err != nil {
@@ -95,6 +97,7 @@ func resolveURL(ctx *fiber.Ctx) error {
 }
 
 var DB *mongo.Client = connectToMongodb()
+var urlCollection *mongo.Collection = GetCollection(DB, "urls")
 
 func main() {
 
@@ -102,7 +105,7 @@ func main() {
 	app.Use(logger.New())
 
 	defer DB.Disconnect(context.Background())
-
+	createMongoDbIndex()
 	app.Get("/", func(ctx *fiber.Ctx) error {
 		return ctx.SendString("Hello World")
 	})
@@ -124,6 +127,18 @@ func connectToMongodb() *mongo.Client {
 		panic(err)
 	}
 	return client
+}
+
+func createMongoDbIndex() {
+	indexModel := mongo.IndexModel{
+		Keys:    bson.D{{Key: "shorten_url", Value: -1}},
+		Options: options.Index().SetUnique(true),
+	}
+	name, err := urlCollection.Indexes().CreateOne(context.TODO(), indexModel)
+	if err != nil {
+		panic(err)
+	}
+	log.Printf("Created MongoDB Index %s", name)
 }
 
 func GetCollection(client *mongo.Client, collectionName string) *mongo.Collection {
