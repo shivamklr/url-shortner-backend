@@ -1,0 +1,11 @@
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+node_modules
+*Data.json
+fiber-apis
+node_modules
+yarn-error.log
+dist
