@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/go-redis/redis/v8"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
@@ -27,8 +28,8 @@ type ShortenUrlModel struct {
 }
 
 type ShortenUrlCreateModel struct {
-	OriginalUrl string        `json:"original_url" validate:"required"`
-	ExpireIn    time.Duration `json:"expire_in" validate:"required"`
+	OriginalUrl string        `json:"original_url" validate:"required,url"`
+	ExpireIn    time.Duration `json:"expire_in" validate:"required,gte=1,lte=24"`
 }
 
 type ShortenResponse struct {
@@ -45,6 +46,13 @@ func createShortenURL(ctx *fiber.Ctx) error {
 		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "cannot parse JSON",
 		})
+	}
+
+	// Validation
+	errors := ValidateStruct(*request)
+	if errors != nil {
+		return ctx.Status(fiber.StatusBadRequest).JSON(errors)
+
 	}
 
 	// Create a struct instance
@@ -112,6 +120,7 @@ func resolveURL(ctx *fiber.Ctx) error {
 
 var DB *mongo.Client = connectToMongodb()
 var urlCollection *mongo.Collection = GetCollection(DB, "urls")
+var validate *validator.Validate
 
 func main() {
 
@@ -120,6 +129,9 @@ func main() {
 
 	defer DB.Disconnect(context.Background())
 	createMongoDbIndex()
+
+	validate = validator.New()
+
 	app.Get("/", func(ctx *fiber.Ctx) error {
 		return ctx.SendString("Hello World")
 	})
