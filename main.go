@@ -73,12 +73,9 @@ func createShortenURL(ctx *fiber.Ctx) error {
 	}
 	urlRecord.Id = recordId
 
-	redisClient := connectToRedis(0)
-	defer redisClient.Close()
-
 	redisTtl, _ := strconv.Atoi(os.Getenv("REDIS_TTL"))
 
-	if err := redisClient.Set(context.Background(), urlRecord.Shorten, urlRecord.OriginalUrl, time.Duration(redisTtl)*60*time.Second).Err(); err != nil {
+	if err := RedisClient.Set(context.Background(), urlRecord.Shorten, urlRecord.OriginalUrl, time.Duration(redisTtl)*60*time.Second).Err(); err != nil {
 		log.Fatal(err)
 	}
 	//  add ttl of 2 minutes.
@@ -91,9 +88,7 @@ func resolveURL(ctx *fiber.Ctx) error {
 	url := ctx.Params("url")
 
 	// check whether the shorten URL key exist in redis cache
-	redisClient := connectToRedis(0)
-	defer redisClient.Close()
-	val, err := redisClient.Get(context.Background(), url).Result()
+	val, err := RedisClient.Get(context.Background(), url).Result()
 	if err == redis.Nil {
 		// if it does not, db lookup, add it in the cache and return it
 		var urlFound ShortenUrlModel
@@ -107,7 +102,7 @@ func resolveURL(ctx *fiber.Ctx) error {
 			return ctx.SendStatus(fiber.StatusInternalServerError)
 		}
 		redisTtl, _ := strconv.Atoi(os.Getenv("REDIS_TTL"))
-		if err := redisClient.Set(context.Background(), urlFound.Shorten, urlFound.OriginalUrl, time.Duration(redisTtl)*60*time.Second).Err(); err != nil {
+		if err := RedisClient.Set(context.Background(), urlFound.Shorten, urlFound.OriginalUrl, time.Duration(redisTtl)*60*time.Second).Err(); err != nil {
 			log.Fatal(err)
 		}
 		return ctx.Redirect(urlFound.OriginalUrl, 302)
@@ -119,6 +114,7 @@ func resolveURL(ctx *fiber.Ctx) error {
 }
 
 var DB *mongo.Client = connectToMongodb()
+var RedisClient *redis.Client = connectToRedis(0)
 var urlCollection *mongo.Collection = GetCollection(DB, "urls")
 var validate *validator.Validate
 
@@ -128,6 +124,7 @@ func main() {
 	app.Use(logger.New())
 
 	defer DB.Disconnect(context.Background())
+	defer RedisClient.Close()
 	createMongoDbIndex()
 
 	validate = validator.New()
@@ -179,4 +176,25 @@ func connectToRedis(dbNo int) *redis.Client {
 		DB:       dbNo,
 	})
 	return client
+}
+
+type ErrorResponse struct {
+	FailedField string
+	Tag         string
+	Value       string
+}
+
+func ValidateStruct(request ShortenUrlCreateModel) []*ErrorResponse {
+	var errors []*ErrorResponse
+	err := validate.Struct(request)
+	if err != nil {
+		for _, err := range err.(validator.ValidationErrors) {
+			var element ErrorResponse
+			element.FailedField = err.StructNamespace()
+			element.Tag = err.Tag()
+			element.Value = err.Param()
+			errors = append(errors, &element)
+		}
+	}
+	return errors
 }
