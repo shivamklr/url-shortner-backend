@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -17,11 +18,17 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-type ShortenUrl struct {
+type ShortenUrlModel struct {
 	Id          primitive.ObjectID `json:"id" bson:"_id,omitempty"`
 	OriginalUrl string             `json:"original_url" bson:"original_url,omitempty"`
 	ExpireIn    time.Duration      `json:"expire_in" bson:"expire,omitempty"`
-	ShortenUrl  string             `json:"shorten_url" bson:"shorten_url,omitempty"`
+	Shorten     string             `json:"shorten" bson:"shorten,omitempty"`
+	ShortenUrl  string             `json:"shorten_url" bson:"omitempty"`
+}
+
+type ShortenUrlCreateModel struct {
+	OriginalUrl string        `json:"original_url" validate:"required"`
+	ExpireIn    time.Duration `json:"expire_in" validate:"required"`
 }
 
 type ShortenResponse struct {
@@ -32,37 +39,43 @@ type ShortenResponse struct {
 
 func createShortenURL(ctx *fiber.Ctx) error {
 
-	body := new(ShortenUrl)
+	request := new(ShortenUrlCreateModel)
 
-	if err := ctx.BodyParser(body); err != nil {
+	if err := ctx.BodyParser(request); err != nil {
 		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "cannot parse JSON",
 		})
 	}
-	// insert data to mongodb database,
-	body.ShortenUrl = uuid.New().String()[:8]
-	body.ExpireIn = 24
-	result, err := urlCollection.InsertOne(context.Background(), body)
+
+	// Create a struct instance
+	urlRecord := &ShortenUrlModel{
+		OriginalUrl: request.OriginalUrl,
+		ExpireIn:    request.ExpireIn,
+		Shorten:     uuid.New().String()[:8],
+	}
+
+	result, err := urlCollection.InsertOne(context.Background(), urlRecord)
 	if err != nil {
 		log.Fatal(err)
 
 	}
-	bodyId, ok := result.InsertedID.(primitive.ObjectID)
+	recordId, ok := result.InsertedID.(primitive.ObjectID)
 	if !ok {
 		log.Fatal("Type Assertion Failed")
 	}
-	body.Id = bodyId
-	// fmt.Printf("Inserted document with _id: %v\n", res.InsertedID)
-	// add ttl of 2 hours
-	// if data is inserted add cache data to redis
+	urlRecord.Id = recordId
+
 	redisClient := connectToRedis(0)
 	defer redisClient.Close()
-	if err := redisClient.Set(context.Background(), body.ShortenUrl, body.OriginalUrl, 1*60*time.Second).Err(); err != nil {
+
+	redisTtl, _ := strconv.Atoi(os.Getenv("REDIS_TTL"))
+
+	if err := redisClient.Set(context.Background(), urlRecord.Shorten, urlRecord.OriginalUrl, time.Duration(redisTtl)*60*time.Second).Err(); err != nil {
 		log.Fatal(err)
 	}
-	//  add ttl of 1 minute.
-	body.ShortenUrl = os.Getenv("DOMAIN") + "/" + body.ShortenUrl
-	return ctx.Status(fiber.StatusCreated).JSON(ShortenResponse{Status: fiber.StatusCreated, Message: "success", Data: &fiber.Map{"data": body}})
+	//  add ttl of 2 minutes.
+	urlRecord.ShortenUrl = os.Getenv("DOMAIN") + "/" + urlRecord.Shorten
+	return ctx.Status(fiber.StatusCreated).JSON(ShortenResponse{Status: fiber.StatusCreated, Message: "success", Data: &fiber.Map{"data": urlRecord}})
 }
 
 func resolveURL(ctx *fiber.Ctx) error {
@@ -75,9 +88,9 @@ func resolveURL(ctx *fiber.Ctx) error {
 	val, err := redisClient.Get(context.Background(), url).Result()
 	if err == redis.Nil {
 		// if it does not, db lookup, add it in the cache and return it
-		var urlFound ShortenUrl
-		filter := ShortenUrl{
-			ShortenUrl: url,
+		var urlFound ShortenUrlModel
+		filter := ShortenUrlModel{
+			Shorten: url,
 		}
 		if err := urlCollection.FindOne(context.Background(), filter).Decode(&urlFound); err != nil {
 			if err == mongo.ErrNoDocuments {
@@ -85,7 +98,8 @@ func resolveURL(ctx *fiber.Ctx) error {
 			}
 			return ctx.SendStatus(fiber.StatusInternalServerError)
 		}
-		if err := redisClient.Set(context.Background(), urlFound.ShortenUrl, urlFound.OriginalUrl, 1*60*time.Second).Err(); err != nil {
+		redisTtl, _ := strconv.Atoi(os.Getenv("REDIS_TTL"))
+		if err := redisClient.Set(context.Background(), urlFound.Shorten, urlFound.OriginalUrl, time.Duration(redisTtl)*60*time.Second).Err(); err != nil {
 			log.Fatal(err)
 		}
 		return ctx.Redirect(urlFound.OriginalUrl, 302)
@@ -131,7 +145,7 @@ func connectToMongodb() *mongo.Client {
 
 func createMongoDbIndex() {
 	indexModel := mongo.IndexModel{
-		Keys:    bson.D{{Key: "shorten_url", Value: -1}},
+		Keys:    bson.D{{Key: "shorten", Value: -1}},
 		Options: options.Index().SetUnique(true),
 	}
 	name, err := urlCollection.Indexes().CreateOne(context.TODO(), indexModel)
