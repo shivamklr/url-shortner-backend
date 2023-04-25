@@ -11,7 +11,7 @@ export const Requests: RequestDTO[] = [];
 
 export function createRandomUser(): RequestDTO {
     return {
-        original_url: faker.internet.email(),
+        original_url: faker.internet.url(),
         expire_in: Math.floor((Math.random() * 24) + 1),
     };
 }
