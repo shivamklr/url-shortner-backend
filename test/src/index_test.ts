@@ -33,8 +33,8 @@ export const options = {
         http_req_duration: ["p(95)<500"], // 95% of requests should be below 500ms
     },
 };
-const BASE_URL = "http://localhost:3000";
 
+const BASE_URL = `${__ENV.MY_HOSTNAME}`;
 export default function () {
     const randomWriteIndex = Math.floor(Math.random() * writeUrls.length);
     const writeUrl = writeUrls[randomWriteIndex] as WriteDataObject;
@@ -50,7 +50,7 @@ export default function () {
             url: `${BASE_URL}/${readUrl.shorten}`,
             params: {
                 tags: { name: "ReadUrlItem" },
-                redirects:0
+                redirects: 0
             }
         }
         readBatch.push(readRequest)
